@@ -1,14 +1,34 @@
 import sys
 from data_service import Valid_Transaction_Filter_Service
+from streaming_percentile import PercentileCalculator
 
-class Donation_Analytics_Service(object):
+class Percentile_Calculation_Service(object):
     """docstring for Donation_Analytics_Service."""
     def __init__(self, percentile):
-        super(Donation_Analytics_Service, self).__init__()
+        super(Percentile_Calculation_Service, self).__init__()
         self.percentile = percentile
+        self.repeat_donors = {}
+        self.percentile_map = {}
 
-    def register_contribution(self):
-        return None;
+    def isRepeatContributer(self, transaction):
+        donor_id = (transaction['ZIP_CODE'],transaction['NAME'])
+        if donor_id in self.repeat_donors.keys():
+            if self.repeat_donors[donor_id] <= transaction['TRANSACTION_DT']:
+                return True
+            else:
+                #Ignore the transaction for the repeated donor
+                return False
+        else:
+            #Add new Repeat donor
+            self.repeat_donors[donor_id] = transaction['TRANSACTION_DT']
+            return False
+
+    def register(self, transaction):
+        transaction_id = (transaction['TRANSACTION_DT'], transaction['ZIP_CODE'], transaction['CMTE_ID'] )
+        if transaction_id not in self.percentile_map.keys():
+            self.percentile_map[transaction_id] = PercentileCalculator(self.percentile)
+        percentile_calculator = self.percentile_map[transaction_id]
+        return percentile_calculator.add(transaction)
 
 
 
@@ -22,23 +42,27 @@ def main():
         perc =  int(line)
         # NOTE: Percentile are assumed to be int. This can however be changed at a later stage
 
-    donation_analytics_service = Donation_Analytics_Service(perc)
     vtfs = Valid_Transaction_Filter_Service()
-
+    pcs = Percentile_Calculation_Service(perc)
 
     with open(input_filename) as ifp:
         with open(output_filename,'w') as ofp:
             for line in ifp:
 
                 #Parse Line and check if the Record is valid
-                temp = vtfs.parse_line(line)
-                vtfs.isValid(temp)
-
-                
+                transaction = vtfs.parse_line(line)
+                result = None
+                if vtfs.isValid(transaction):
+                    #check if repeat donor and add record to register percentile
+                    transaction = vtfs.transform(transaction)
+                    if pcs.isRepeatContributer(transaction):
+                        result = pcs.register(transaction)
 
                 #Write the response to output file
-                ofp.write(str(vtfs.isValid(temp)))
-                ofp.write("\n")
+                if result:
+                    response = vtfs.delimiter.join(str(elem) for elem in result)
+                    ofp.write(response)
+                    ofp.write("\n")
 
 
 if __name__ == "__main__":
